@@ -17,11 +17,11 @@
   branch = "master"
   name = "github.com/ralreegorganon/nmeaais"
   packages = ["."]
-  revision = "ef787dd5b60d4ed833fc516ae7557692b1e6caa4"
+  revision = "58fc7d03e092abf10a7cc1c707b5ab8afc1007e2"
 
 [solve-meta]
   analyzer-name = "dep"
   analyzer-version = 1
-  inputs-digest = "a9478e456b455c35ef6ef5882e77f5c9e40db8c3404e9c2fa067f0dcbd328f4b"
+  inputs-digest = "0108e6beb00f857755984101c68407835a672ca59aff0097ac03716b60bfff81"
   solver-name = "gps-cdcl"
   solver-version = 1

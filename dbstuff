@@ -1,0 +1,146 @@
+create index idx_message_mmsi on message(mmsi)
+create index idx_message_type on message(type)
+
+insert into position
+(mmsi, latitude, longitude, the_geog, created_at)
+select
+	mmsi, 
+	(message->>'Latitude')::double precision,
+	(message->>'Longitude')::double precision,
+	ST_GeographyFromText('SRID=4326;POINT(' || (message->>'Longitude')::text || ' ' || (message->>'Latitude')::text || ')'),
+	created_at
+from
+	message
+where
+	type in (1,2,3,9,18,19,27)
+    and (message->>'Latitude')::double precision != 91
+    and (message->>'Longitude')::double precision != 181
+
+create index idx_position_mmsi on position(mmsi)
+create index idx_position_created_at on position(created_at)
+
+
+with
+raw_data as
+(
+	select 
+		mmsi, 
+		the_geog, 
+		created_at, 
+		coalesce(created_at - lag(created_at, 1) over (partition by mmsi order by created_at) < interval '6 minutes', false) is_continuation_of_leg,
+		rank() over (partition by mmsi order by created_at) ranking
+	from 
+		position 
+	where 
+		mmsi = 338181914 
+),
+endpoints as
+(
+	select 
+		mmsi, 
+		the_geog, 
+		created_at, 
+		is_continuation_of_leg,
+		ranking,
+		is_continuation_of_leg = false and lead(is_continuation_of_leg,1) over (partition by mmsi order by created_at) = true is_start_of_leg,
+		is_continuation_of_leg = true and lead(is_continuation_of_leg,1) over (partition by mmsi order by created_at) = false is_end_of_leg
+	from 
+		raw_data
+),
+segment_raw as
+(
+	select 
+		mmsi, 
+		ranking,
+		is_start_of_leg,
+		is_end_of_leg,
+		ranking start_ranking,
+		lead(ranking, 1) over (partition by mmsi order by ranking) end_ranking,
+		created_at start_time,
+		lead(created_at, 1) over (partition by mmsi order by ranking) end_time
+	from 
+		endpoints 
+	where 
+		is_start_of_leg = true 
+		or is_end_of_leg = true
+),
+segments as
+(
+	select 
+		mmsi,
+		start_ranking, 
+		end_ranking,
+		start_time,
+		end_time
+	from
+		segment_raw
+	where
+		is_start_of_leg = true
+),
+assigned_legs as
+(
+	select 
+		rd.mmsi, 
+		the_geog,
+		created_at, 
+		coalesce(s.start_ranking, ranking) leg,
+		coalesce(s.start_time, created_at) leg_started_at,
+		coalesce(s.end_time, created_at) leg_ended_at
+	from 
+		raw_data rd 
+		left outer join segments s
+			on rd.mmsi = s.mmsi 
+			and rd.ranking >= s.start_ranking 
+			and rd.ranking <= s.end_ranking
+),
+leg_geom as 
+(
+	select
+		mmsi,
+		leg,
+		leg_started_at,
+		leg_ended_at,
+		st_segmentize(st_makeline(the_geog::geometry order by created_at),100) the_geom
+	from
+		assigned_legs
+	group by
+		mmsi,
+		leg,
+		leg_started_at,
+		leg_ended_at
+),
+final_tabular as
+(
+	select
+		mmsi,
+		rank() over (partition by mmsi order by leg) leg,
+		leg_started_at,
+		leg_ended_at,
+		leg_ended_at - leg_started_at leg_duration,
+		st_length(the_geom::geography)/1000 leg_length_km,
+		the_geom
+	from
+		leg_geom
+)
+select
+	mmsi, 
+	json_build_object(
+		'type', 'FeatureCollection',
+		'features', json_agg(json_build_object(
+			'type', 'Feature',
+			'geometry', st_asgeojson(the_geom)::json,
+			'properties',json_build_object(
+				'mmsi', mmsi,
+				'leg_started_at', leg_started_at,
+				'leg_ended_at', leg_ended_at,
+				'leg_duration', leg_duration,
+				'leg_length_km', leg_length_km
+			)
+		))
+	) geojson
+from 
+	final_tabular
+group by
+	mmsi
+	
+	

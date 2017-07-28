@@ -27,4 +27,8 @@
 
 [[constraint]]
   branch = "master"
+  name = "github.com/lib/pq"
+
+[[constraint]]
+  branch = "master"
   name = "github.com/ralreegorganon/nmeaais"

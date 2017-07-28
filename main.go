@@ -42,11 +42,6 @@ func main() {
 
 		for o := range d.Output {
 			if o.Error != nil {
-				// not worth talking about, it's empty
-				if o.SourcePackets[0].Raw == "!AIVDM,1,1,,A,,0*26" {
-					continue
-				}
-
 				fmt.Println("couldnt decode message: ", o.Error)
 				for _, p := range o.SourcePackets {
 					fmt.Println(p.Raw)

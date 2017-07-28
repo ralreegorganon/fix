@@ -1,0 +1,88 @@
+package main
+
+import (
+	"archive/zip"
+	"encoding/csv"
+	"fmt"
+	"log"
+	"path/filepath"
+	"time"
+
+	"github.com/ralreegorganon/nmeaais"
+)
+
+func main() {
+	files, err := filepath.Glob("*.zip")
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	d := nmeaais.NewDecoder()
+
+	donezo := make(chan bool)
+	go func() {
+		for o := range d.Output {
+			if o.Error != nil {
+				if o.SourcePackets[0].Raw == "!AIVDM,1,1,,A,,0*26" {
+					continue
+				}
+
+				fmt.Println("couldnt decode message: ", o.Error)
+				for _, p := range o.SourcePackets {
+					fmt.Println(p.Raw)
+				}
+				continue
+			}
+		}
+		donezo <- true
+	}()
+
+	for _, z := range files {
+		zr, err := zip.OpenReader(z)
+		if err != nil {
+			log.Fatal(err)
+		}
+		defer zr.Close()
+
+		for _, f := range zr.File {
+			rc, err := f.Open()
+			if err != nil {
+				log.Fatal(err)
+			}
+			defer rc.Close()
+
+			reader := csv.NewReader(rc)
+			reader.FieldsPerRecord = -1
+			records, err := reader.ReadAll()
+			if err != nil {
+				log.Fatal(err)
+			}
+
+			layout := "2006-01-02 15:04:05"
+
+			for i, rec := range records {
+				if i == 0 || i == 1 {
+					continue
+				}
+
+				if len(rec) != 13 {
+					fmt.Println("fuck not the right number of columns: ", len(rec))
+					break
+				}
+
+				t, err := time.Parse(layout, rec[2])
+				if err != nil {
+					fmt.Println("fuck bad dates: ", rec[2])
+					break
+				}
+
+				s := fmt.Sprintf("%s,%s,%s,%s,%s,%s,%s", rec[4], rec[5], rec[6], rec[7], rec[8], rec[9], rec[10])
+
+				d.Input <- nmeaais.DecoderInput{Input: s, Timestamp: t}
+			}
+		}
+	}
+
+	close(d.Input)
+	<-donezo
+}
